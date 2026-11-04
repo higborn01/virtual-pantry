@@ -10,8 +10,29 @@ from import_excel import singular  # same plural -> singular rule the import use
 STAPLES = {"salt", "pepper", "black pepper", "water", "oil", "olive oil", "vegetable oil",
            "salt and pepper", "cooking spray", "ice"}
 
+# Describing words that don't change WHAT the food is ('shredded mozzarella' is still mozzarella).
+SOFT = set("""fresh frozen dried canned chopped diced sliced minced shredded grated ground whole baby large small
+    extra unsalted salted plain organic raw cooked day old jumbo mini of and the a pure fancy crushed roasted red
+    yellow white brown sharp mild heavy firm wide fried boiled soft hard scrambled poached caramelized toasted
+    steamed crusty sandwich long grain basmati jasmine regular light opened unopened labeled russet ceylon elbow""".split())
+
+# Brand / store words found in item names (ignored when matching).
+BRANDS = set("""gv great value barilla trader joe newman own heinz king arthur fleischmann mccormick cacique marukan
+    lee kum kee one dakin farm walkerswood san marco tai pei gardein nature valley duncan hine dolce flav
+    savannah bee garden life golden publix better than""".split())
+
+# Container words: ignored in item names ('Unsalted butter sticks' is butter) and in recipe keywords
+# (except 'stick' and 'cup' in recipes - 'mozzarella sticks' is a different food from mozzarella!).
+PACKAGING = {"jar", "bag", "can", "box", "bottle", "container", "pack", "pkg", "carton", "tub", "block",
+             "shaker", "pint", "gal", "bunch", "stick", "cup"}
+KEEP_IN_RECIPES = {"stick", "cup"}
+
 # Recipe keyword -> other things in the pantry that count as having it.
 SYNONYMS = {
+    "hot sauce": ["sriracha", "buffalo hot sauce", "carrot hot sauce", "honey hot sauce"],
+    "salsa": ["salsa verde"], "vinegar": ["balsamic vinegar", "rice vinegar"],
+    "chili paste": ["sambal oelek"], "sambal": ["sambal oelek"],
+    "curry roux": ["curry"], "curry block": ["curry"], "japanese curry": ["curry"],
     "vegetable broth": ["bouillon"], "veg broth": ["bouillon"], "broth": ["bouillon"],
     "vegetable stock": ["bouillon"], "stock": ["bouillon"],
     "scallion": ["green onion"],
@@ -24,11 +45,6 @@ SYNONYMS = {
     "heavy cream": ["whipping cream"], "cream": ["whipping cream"],
     "lemon": ["lemon juice"], "lime juice": ["lime"],
 }
-
-# Words too general to match on their own (a recipe's 'hot sauce' shouldn't match any '... sauce').
-GENERIC = {"bean", "sauce", "oil", "powder", "paste", "seasoning", "mix", "juice", "pepper",
-           "vinegar", "cream", "extract", "spice", "cheese", "flake", "seed", "leaf", "cup", "bar"}
-
 
 def words(text):
     """'Black Beans (canned)' -> ['black', 'bean']: lower-case words, singular, brackets dropped."""
@@ -45,27 +61,28 @@ class Matcher:
     """Answers 'do we have <keyword>?' using the in-stock items."""
 
     def __init__(self, items):
-        self.profiles = []                               # one (all words, core words) pair per in-stock item
+        self.foods = []                                  # one (main word, other words) pair per food in stock
         for item in items:                               # every item
             if not in_stock(item):                       # skip Out items
                 continue
-            name = re.sub(r"\([^)]*\)", " ", item["name"].lower())  # name without brackets
-            alts = re.split(r"/|\bor\b", name)           # 'Tortillas / wraps' -> two alternatives
-            cores = {words(a)[-1] for a in alts if words(a)}  # last word of each alternative: 'tortilla', 'wrap'
-            self.profiles.append((set(words(name)), cores))   # remember both
+            name = re.sub(r"\([^)]*\)", " ", item["name"].lower())  # name without (brackets)
+            for alt in re.split(r"/|\bor\b", name):      # 'Tortillas / wraps' -> 'tortillas', 'wraps' (each is a food)
+                w = [x for x in words(alt) if x not in PACKAGING and x not in BRANDS and len(x) > 1]  # drop jar/GV/etc.
+                if w:                                    # anything left?
+                    self.foods.append((w[-1], set(w[:-1])))  # main word = last word; the rest describe it
 
     def has(self, keyword):
-        """True if some in-stock item matches the keyword (or one of its synonyms)."""
+        """True if some in-stock food IS this ingredient (or one of its synonyms)."""
         for phrase in [keyword] + SYNONYMS.get(keyword, []):  # the keyword itself, then its synonyms
-            kw = words(phrase)                           # its words
-            if not kw:                                   # nothing left (e.g. only symbols)
+            kw = [x for x in words(phrase) if x not in PACKAGING - KEEP_IN_RECIPES]  # recipe words minus containers
+            if not kw:                                   # nothing left
                 continue
-            head = kw[-1]                                # main noun = last word ('crusty bread' -> 'bread')
-            for all_words, cores in self.profiles:       # check every in-stock item
-                if set(kw) <= all_words:                 # rule 1: every keyword word is in the item name
-                    return True
-                if head not in GENERIC and head in cores:  # rule 2: same main noun ('flour tortilla' ~ 'Tortillas')
-                    return True
+            head, extra = kw[-1], set(kw[:-1])           # main word + describing words, e.g. 'mozzarella' + {'fresh'}
+            for food_head, food_extra in self.foods:     # every food in stock
+                if (food_head == head                    # same main word ('cheese' = 'cheese')...
+                        and food_extra <= extra | SOFT   # ...the pantry item's extra words are in the recipe or harmless
+                        and extra <= food_extra | SOFT):  # ...and the recipe's extra words are in the item or harmless
+                    return True                          #   (so 'peanut butter' is NOT 'butter', 'coconut milk' is NOT 'milk')
         return False                                     # nothing matched
 
 

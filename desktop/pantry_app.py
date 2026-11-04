@@ -28,6 +28,12 @@ LEFTOVER_DAYS = 4  # leftovers older than this get flagged
 
 # ----------------------------------------------------- STEP 3: look & feel
 OUTLINE = "#1f2d3d"   # the thick dark cartoon outline used on almost everything
+PAPER = "#fffdf2"     # notebook-paper cream for the side panel
+COMIC = ("Comic Sans MS", 10)                # comic font for the notebook side
+COMIC_BOLD = ("Comic Sans MS", 10, "bold")
+TAB_COLORS = {"Item": "#ffd166", "Shopping list": "#7ed957",          # index-tab colours (also the tab order)
+              "What can I cook?": "#ffa36c", "Leftovers": "#8ec5ff"}
+TAB_LABELS = {"Shopping list": "Shopping", "What can I cook?": "Cook"}  # shorter words written on the small index tabs
 
 # Shelf order inside each unit (categories not in this list go at the end).
 CATEGORIES = ["Produce", "Dairy & Eggs", "Frozen", "Canned & Dry", "Grains & Pasta", "Baking",
@@ -193,6 +199,7 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         }
         self.line_h = self.fonts["tile"].metrics("linespace")  # height of one line of tile text (bigger on high-DPI screens)
         self.tile_h = 46 + 2 * self.line_h + 30          # tile height: emoji area + 2 name lines + qty/badge row
+        self.apply_theme()                               # comic font + notebook paper for buttons, boxes and lists
 
         # ---- top bar ----
         bar = ttk.Frame(self, padding=(10, 8))           # a box to hold the top-bar widgets; padding = space inside its edges
@@ -234,22 +241,80 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         self.canvas.tag_bind("tile", "<Leave>", lambda e: self.canvas.configure(cursor=""))  # mouse leaves -> normal cursor
         split.add(left, weight=3)                        # add the left pane; weight = how much extra width it gets (3 parts)
 
-        # right pane: a Notebook = a set of tabs
-        self.tabs = ttk.Notebook(split, width=380)       # the tab container, about 380 px wide to start
-        split.add(self.tabs, weight=1)                   # add the right pane (1 part of extra width)
+        # right pane: a spiral notebook = our own drawn tab strip + a Notebook (set of pages) with its tabs hidden
+        right = ttk.Frame(split, style="Paper.TFrame")   # holds the tab strip + pages
+        split.add(right, weight=1)                       # add the right pane (1 part of extra width)
+        self.tab_bar = tk.Canvas(right, height=88, background=PAPER, highlightthickness=0)  # spiral + index tabs drawn here
+        self.tab_bar.pack(side="top", fill="x")          # across the top of the pane
+        self.tab_bar.bind("<Configure>", lambda e: self.draw_tab_bar())  # redraw when the pane is resized
+        self.tabs = ttk.Notebook(right, style="Paper.TNotebook", width=380)  # the pages (tabs hidden by the style)
+        self.tabs.pack(side="top", fill="both", expand=True)
         self.tab = {}                                    # dict: tab name -> its frame, so later steps can fill each tab
-        for name in ["Item", "Shopping list", "What can I cook?", "Leftovers"]:  # each tab
-            frame = ttk.Frame(self.tabs, padding=12)     # one page of the notebook
-            self.tabs.add(frame, text=name)              # add the page with its tab title
+        for name in TAB_COLORS:                          # each tab (Item, Shopping list, ...)
+            frame = ttk.Frame(self.tabs, padding=(16, 6, 12, 12), style="Paper.TFrame")  # one page, notebook-paper colour
+            self.tabs.add(frame, text=name)              # add the page
             self.tab[name] = frame                       # remember it by name
-        style = ttk.Style(self)                          # shared look for the lists in the tabs
-        style.configure("Treeview", rowheight=self.line_h + 12, font=("Segoe UI", 10))  # taller rows that fit the text
-        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))              # bold column titles
         self.build_item_panel()                          # fill the Item tab (Step 4)
         self.build_shopping_tab()                        # Step 6
         self.build_cook_tab()                            # Step 7
         self.build_leftovers_tab()                       # Step 8
-        self.tabs.bind("<<NotebookTabChanged>>", lambda e: self.refresh_current_tab())  # virtual event: fires when you switch tabs
+        self.tabs.bind("<<NotebookTabChanged>>", lambda e: (self.refresh_current_tab(), self.draw_tab_bar()))  # fires when you switch tabs
+
+    def apply_theme(self):
+        """Cartoony look for the buttons, boxes and lists: comic font, notebook paper, dark outlines."""
+        style = ttk.Style(self)                          # ttk styles = named looks shared by widgets
+        style.theme_use("clam")                          # 'clam' theme lets us set colours (the Windows theme ignores them)
+        style.configure(".", background=PAPER, foreground=OUTLINE, font=COMIC)  # defaults for every ttk widget
+        style.configure("TButton", background="#ffffff", bordercolor=OUTLINE, lightcolor="#ffffff",  # white button, dark border
+                        darkcolor="#ffffff", padding=(10, 3), font=COMIC_BOLD)
+        style.map("TButton", background=[("pressed", "#ffd166"), ("active", "#fff3c4")])  # yellow when hovered / pressed
+        style.configure("Big.TButton", font=(COMIC[0], 18, "bold"), padding=(14, 0))       # chunky - / + buttons
+        style.configure("TEntry", fieldbackground="#ffffff", bordercolor=OUTLINE, padding=4)  # white text boxes
+        style.configure("TCombobox", fieldbackground="#ffffff", bordercolor=OUTLINE, arrowcolor=OUTLINE, padding=3)
+        style.map("TCombobox", fieldbackground=[("readonly", "#ffffff")])  # read-only boxes stay white too
+        style.configure("Treeview", background=PAPER, fieldbackground=PAPER, bordercolor=OUTLINE,  # lists on paper
+                        rowheight=self.line_h + 14, font=COMIC)
+        style.configure("Treeview.Heading", background="#ffd166", bordercolor=OUTLINE, font=COMIC_BOLD)  # yellow headings
+        style.map("Treeview", background=[("selected", "#ffe58a")], foreground=[("selected", OUTLINE)])  # highlighter yellow
+        style.configure("Paper.TFrame", background=PAPER)   # notebook-paper pages
+        style.configure("Paper.TNotebook", background=PAPER, borderwidth=0, tabmargins=0)
+        style.layout("Paper.TNotebook.Tab", [])          # hide the normal tabs - we draw our own
+        style.configure("TPanedwindow", background="#cfe8f7")  # the divider between shelves and notebook
+        self.option_add("*TCombobox*Listbox.font", COMIC)  # the drop-down list font (plain tk widget inside the combobox)
+
+    def draw_tab_bar(self):
+        """Spiral binding along the top + coloured index tabs (the selected one joins the page)."""
+        c = self.tab_bar                                 # short name
+        c.delete("all")                                  # wipe and redraw
+        W = c.winfo_width()                              # current width
+        if W < 50:                                       # not shown yet
+            return
+        current = self.tabs.tab(self.tabs.select(), "text")  # title of the selected page
+        c.create_rectangle(0, 0, W, 26, fill="#cfe8f7", outline="")  # strip behind the coil (same as the divider colour)
+        round_rect(c, 4, 14, W - 4, 120, 18, fill=PAPER, outline=OUTLINE, width=2.5)  # top of the paper (runs on under the tabs)
+        for x in range(22, W - 14, 24):                  # one ring every 24 px
+            c.create_oval(x - 4, 28, x + 4, 36, fill=OUTLINE, outline="")  # punched hole in the paper
+            c.create_arc(x - 7, 4, x + 7, 34, start=-20, extent=220, style="arc", width=3.5, outline="#8a96a3")  # metal coil loop
+            c.create_arc(x - 6, 5, x + 4, 31, start=40, extent=80, style="arc", width=1.5, outline="#e8eef3")    # shine on the coil
+        names = list(TAB_COLORS)                         # tab titles in order
+        tw = (W - 24) / len(names)                       # each tab's width
+        for i, name in enumerate(names):                 # each index tab
+            x0, x1 = 12 + i * tw + 3, 12 + (i + 1) * tw - 3  # left / right edges (3 px gap between tabs)
+            sel = name == current                        # is it the open page?
+            y0 = 44 if sel else 50                       # selected tab sticks up a little higher
+            fill = TAB_COLORS[name] if sel else mix(TAB_COLORS[name], "#ffffff", 0.45)  # others look paler
+            tag = f"tab{i}"                              # tag so the whole tab is clickable
+            round_rect(c, x0, y0, x1, 100, 12, fill=fill, outline=OUTLINE, width=2.5, tags=tag)  # tab shape
+            c.create_text((x0 + x1) / 2, y0 + 19, text=TAB_LABELS.get(name, name), font=COMIC_BOLD if sel else COMIC,  # its (short) title
+                          fill=OUTLINE, width=tw - 8, justify="center", tags=tag)
+            c.tag_bind(tag, "<Button-1>", lambda e, n=name: self.tabs.select(self.tab[n]))  # click -> open that page
+            c.tag_bind(tag, "<Enter>", lambda e: c.configure(cursor="hand2"))              # pointing hand
+            c.tag_bind(tag, "<Leave>", lambda e: c.configure(cursor=""))
+        c.create_line(0, 86, W, 86, fill=OUTLINE, width=2.5)  # edge of the page under the tabs...
+        if current in names:                             # ...with a gap under the selected tab, so it joins the page
+            i = names.index(current)
+            c.create_line(12 + i * tw + 5, 86, 12 + (i + 1) * tw - 5, 86, fill=TAB_COLORS[current], width=4)
+        c.create_rectangle(0, 87, W, 88, fill=PAPER, outline="")  # paper colour continues into the page
 
     def update_counts(self):
         """Refresh the 'N items · N low · N out' label in the top bar."""
@@ -282,8 +347,6 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         tab = self.tab["Item"]                           # the Item tab's frame
         for widget in tab.winfo_children():              # remove the 'Coming in Step 4' placeholder
             widget.destroy()
-        style = ttk.Style(self)                          # ttk styles = named looks shared by widgets
-        style.configure("Big.TButton", font=("Segoe UI Black", 18), padding=(14, 0))  # chunky - / + buttons
 
         # Shown when nothing is selected:
         self.item_hint = ttk.Label(tab, foreground="grey", justify="left",
@@ -296,12 +359,12 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         head.pack(fill="x")                              # full width
         self.item_pic = ttk.Label(head)                  # big emoji picture (image set in refresh)
         self.item_pic.pack(side="left", padx=(0, 10))    # on the left
-        self.item_title = ttk.Label(head, font=("Segoe UI Black", 15), wraplength=280, justify="left")  # item name; wraps at 280 px
+        self.item_title = ttk.Label(head, font=(COMIC[0], 15, "bold"), wraplength=280, justify="left")  # item name; wraps at 280 px
         self.item_title.pack(side="left", fill="x", expand=True)  # takes the rest of the row
 
         info = ttk.Frame(self.item_form)                 # status badge + where it lives
         info.pack(fill="x", pady=(8, 0))                 # a bit of space above
-        self.item_status = tk.Label(info, font=("Segoe UI Black", 10), fg=OUTLINE, padx=10)  # coloured status badge (tk.Label lets us set bg colour)
+        self.item_status = tk.Label(info, font=COMIC_BOLD, fg=OUTLINE, padx=10)  # coloured status badge (tk.Label lets us set bg colour)
         self.item_status.pack(side="left")
         self.item_where = ttk.Label(info, foreground="grey")  # 'Spices · Pantry'
         self.item_where.pack(side="left", padx=8)
@@ -309,7 +372,7 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         row = ttk.Frame(self.item_form)                  # the big - qty + row
         row.pack(pady=16)                                # centred, with space around it
         ttk.Button(row, text="−", width=2, style="Big.TButton", command=lambda: self.bump(-1)).pack(side="left")  # minus 1
-        self.item_qty = ttk.Label(row, font=("Segoe UI Black", 20), anchor="center")  # current qty, big
+        self.item_qty = ttk.Label(row, font=(COMIC[0], 20, "bold"), anchor="center")  # current qty, big
         self.item_qty.pack(side="left", padx=16)
         ttk.Button(row, text="+", width=2, style="Big.TButton", command=lambda: self.bump(+1)).pack(side="left")  # plus 1
 
@@ -700,7 +763,7 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
                   foreground="grey", justify="left").pack(anchor="w")
         self.shop_tree = self.make_tree(tab, (), ("Item",), (300,), show="tree")  # just one column, no headings
         self.shop_tree.bind("<ButtonRelease-1>", self.on_shop_click)  # click (on release) -> tick/untick
-        self.shop_tree.tag_configure("cat", font=("Segoe UI Black", 10))  # category rows in a chunky font
+        self.shop_tree.tag_configure("cat", font=(COMIC[0], 11, "bold"))  # category rows in a chunky font
         self.shop_tree.tag_configure("done", foreground="#9aa5b1")       # ticked rows greyed out
         self.ticked = set()                              # row ids that are ticked (kept while the app is open)
 
@@ -795,7 +858,7 @@ class App(tk.Tk):  # the main window; tk.Tk is tkinter's top-level window class
         self.cook_tree.tag_configure("most", background="#fff4cc")  # 70%+ -> yellow row
         self.cook_tree.bind("<<TreeviewSelect>>", lambda e: self.show_dish())  # row picked -> details below
 
-        self.dish_title = ttk.Label(tab, font=("Segoe UI Black", 11), wraplength=360, justify="left")
+        self.dish_title = ttk.Label(tab, font=(COMIC[0], 12, "bold"), wraplength=360, justify="left")
         self.dish_title.pack(anchor="w")
         self.dish_info = ttk.Label(tab, wraplength=360, justify="left")  # shopping list + what's missing
         self.dish_info.pack(anchor="w", pady=(2, 6))

@@ -1,0 +1,12 @@
+# Personal data - never commit
+pantry.db
+pantry_export.json
+*.backup.xlsx
+
+# Python clutter
+__pycache__/
+*.pyc
+
+# Editor / tool settings
+.claude/
+.vscode/
